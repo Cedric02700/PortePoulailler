@@ -14,19 +14,29 @@ boolean etatFdcBas;                 //memorise etat FDC bas
 long compteurTrajetMontant;         //Compteur trajet montant, utilisé pour valider la calibration
 long compteurTrajetDescendant;      //Compteur trajet descendant, utilisé pour valider la calibration
 long compteurTrajet;                //Compteur trajet, utilisé pour detecter un probleme de moteur ou de FDC lor de l'utilisation
+int extra = 200;                 //Nombre de pas a faire en plus apres ouverture/fermeture
 
 //********** Declaration des variable pour la mesure de luminosité et traitement de l'info *******************
-int seuil;              //Seuil de declenchement ouverture/fermeture porte.
+int seuil = 750;              //Seuil de declenchement ouverture/fermeture porte.
 int lumi;               //Variable qui stock la valeur de luminosité ambiante
 long delaiTimer = 0;    //Pour valider que le sueil est bien franchi. evite les ouv/ferm intempestives
 int validation = 0;     //Indique que l'on est en attende de validation que le seuil franchi
 boolean hyst = 50;      //Hysteresis
-long delai = 180000;    //Delai de validation 
+long delai = 2000;      //Delai de validation 
+
+//********** Declaration des variables pour la gestion de la LED *********************************************
+int delaiOn = 0;
+int delaiOff = 0;
+int nbCycles = 0;
+long timerOn;
+long timerOff;
+boolean etatLed = 0;     //0 = LED eteinte, 1 = LED allumee
+boolean flashMode = 0;   //Indique que la LED doit clignoter
+
 
 void setup() 
 {
   Serial.begin(9600);          //Utilisé pour debug  
-  pinMode(LED, OUTPUT);        //
   pinMode(Step, OUTPUT);
   pinMode(Dir, OUTPUT);
   pinMode(Enable, OUTPUT);
@@ -34,6 +44,39 @@ void setup()
   pinMode(FdcBas, INPUT);
   etatFdcHaut = digitalRead(FdcHaut);
   etatFdcBas = digitalRead(FdcBas);
+  digitalWrite(Enable, HIGH);
+  flashConfig(500, 500, 5);  //debug
+}
+
+void flashConfig(int on, int off, int nb)
+{
+  delaiOn = on;
+  delaiOff = off;
+  nbCycles = nb;
+  timerOn = millis();
+  analogWrite(LED, 255);
+  etatLed = 1;
+  flashMode = 1;
+}
+
+void flash()
+{
+  if(((millis() - timerOn) >= delaiOn) && (etatLed == 1))
+  {
+    timerOff = millis();
+    analogWrite(LED, 0);
+    etatLed = 0;
+    nbCycles--;
+    Serial.println("on");
+  }
+  if(((millis() - timerOff) >= delaiOff) && (etatLed == 0))
+  {
+    timerOn = millis();
+    analogWrite(LED, 255);
+    etatLed = 1;
+    Serial.println("off");
+  }
+  if(nbCycles <= 0)flashMode = 0;
 }
 
 void calibration()  //*************************************************************************************** 
@@ -41,7 +84,7 @@ void calibration()  //**********************************************************
   etatFdcHaut = digitalRead(FdcHaut);         //Lecture etat FDC Haut
   compteurTrajetMontant = 0;                  //Passe le compteur de pas montant a 0
   compteurTrajetDescendant = 0;               //Passe le compteur de pas descendant a 0
-  digitalWrite(Enable, HIGH);                 //Active l'alimentation du moteur
+  digitalWrite(Enable, LOW);                 //Active l'alimentation du moteur
   if(FdcHaut == LOW)                          //Si le FDC haut activé
   {
     digitalWrite(Dir, LOW);                   //Moteur dans le sens descente
@@ -72,7 +115,8 @@ void calibration()  //**********************************************************
     avance1pas();                             //Avance le moteur de 1 pas
     compteurTrajetMontant++;                  //Increment le compteur de trajet montant
   }
-  digitalWrite(Enable, LOW);                  //Coupe l'alimentation du moteur
+  digitalWrite(Enable, HIGH);                  //Coupe l'alimentation du moteur
+  //detection erreur à coder 
 }
 
 void avance1pas()  //*****************************************************************************************
@@ -85,12 +129,42 @@ void avance1pas()  //***********************************************************
 
 void ouverture() //*******************************************************************************************
 {
-  
-}
+  etatFdcHaut = digitalRead(FdcHaut);       //lecture etat fin de course haut
+  digitalWrite(Dir, HIGH);                  //moteur sens montee
+  digitalWrite(Enable, LOW);                //active le moteur
+  while(etatFdcHaut == HIGH)                //Tant que fin de course haut desactivé
+  {
+    avance1pas();                           //avance le moteur de 1 pas
+    etatFdcHaut = digitalRead(FdcHaut);     //lecture etat fin de course haut   
+  } 
+  for(int i = extra; i > 0; i--)      //Movement supplementaire pour assurer l'activation du fin de course   
+  {
+    avance1pas();                         //avance le moteur de 1 pas
+  }
+  etatPorte = 0;
+  digitalWrite(Enable, HIGH);             //desactive le moteur
+  Serial.println("Porte Ouverte");
+  //detection erreur à coder    
+}  
 
 void fermeture() //*******************************************************************************************
 {
-  
+  etatFdcBas= digitalRead(FdcBas);        //lecture fin de course bas
+  digitalWrite(Dir, LOW);                 //moteur sens descente
+  digitalWrite(Enable, LOW);              //active le moteur
+  while(etatFdcBas == HIGH)               //tant que fin de course bas deasctivé 
+  {
+    avance1pas();                         //avance le moteur de 1 pas
+    etatFdcBas = digitalRead(FdcBas);     
+  }   
+  for(int i = extra; i>0; i--)        //mouvement supplementaire pour assurer l'activation du fin de course
+  {
+    avance1pas();                         //avance de 1 pas
+  }
+  etatPorte = 1;
+  digitalWrite(Enable, HIGH);             //desactive le moteur
+  Serial.println("Porte Fermee");
+  //detection erreur à coder
 }
 
 void luminosite() //******************************************************************************************
@@ -108,39 +182,35 @@ void luminosite() //************************************************************
     {
       validation = 0;                                             //Annule la validation et la fermeture de la porte
     }
-    if((lumi <= (seuil-hyst)) && (validation == 1))               //Si la luminosité sous le seuil pendant que la validation en cours
+    if(((lumi <= (seuil-hyst)) && (validation == 1) && (millis() - delaiTimer) >= delai)) //Si delai de validation ecoulé
     {
-      if(((millis() - delaiTimer) >= delai) && (validation == 1)) //Si delai de validation ecoulé
-      {
-        fermeture();                                              //ferme la porte 
-        validation = 0;                                           //Sort du mode validation
-      }
+      fermeture();                                                //Ferme la porte 
+      validation = 0;                                             //Sort du mode validation
     }
   }
   
   if(etatPorte == 1)                                              //Si la porte est fermee
   {
-    if((lumi >= (seuil - hyst)) && (validation == 0))             //Si la luminosité ambiante passe au dessus le seuil pour la premiere fois
+    if((lumi >= (seuil + hyst)) && (validation == 0))             //Si la luminosité ambiante passe au dessus le seuil pour la premiere fois
     {
       delaiTimer = millis();                                      //Demarre le chrono de validation de depassement de seuil
       validation = 1;                                             //Indique que la vailidation de depassement de seuil est active
     }
-    if((lumi <= (seuil - hyst)) && (validation == 1))             //Si la luminosité descend sous le seuil avant la fin de la validation
+    if((lumi <= (seuil + hyst)) && (validation == 1))             //Si la luminosité descend sous le seuil avant la fin de la validation
     {
       validation = 0;                                             //Annule la validation et l'ouverture de la porte
     }
-    if((lumi >= (seuil-hyst)) && (validation == 1))               //Si la luminosité est au dessus du seuil et que la validation en cours
+    if(((lumi >= (seuil + hyst)) && (validation == 1)) && ((millis() - delaiTimer) > delai))  //Si delai validation ecoulé
     {
-      if(((millis() - delaiTimer) >= delai) && (validation == 1)) //Si delai de validation ecoulé
-      {
-        ouverture();                                              //ouvre la porte 
-        validation = 0;                                           //Sort du mode validation
-      }
+      ouverture();                                                //Ouvre la porte 
+      validation = 0;                                             //Sort du mode validation
     }
   }
+//  Serial.println(lumi);
 }
 
 void loop() 
 {
-
+//  luminosite();
+  if(flashMode == 1) flash();
 }
