@@ -32,7 +32,8 @@ long timerOn;
 long timerOff;
 boolean etatLed = 0;     //0 = LED eteinte, 1 = LED allumee
 boolean flashMode = 0;   //Indique que la LED doit clignoter
-
+int flashType = 1;
+int pwm = 0;             //utilisé pour alumage et extinction progressive
 
 void setup() 
 {
@@ -48,35 +49,91 @@ void setup()
   flashConfig(500, 500, 5);  //debug
 }
 
-void flashConfig(int on, int off, int nb)
+//**********************************************************************************************************
+//*** Utilisation de la fonction ledConfig()                                                             
+//*** Mode: - 1 = LED clignotante, on: duree allumee, off: duree eteinte, nb: nombre de clignotements
+//***       - 2 = LED allumage progressif, on: duree pour passer de  eteint a allumee, off: duree durant
+//***             laquelle le LED est eteinte entre deux cycles.
+//***       - 3 = LED a extinction progressive: idem allumage progressif mais a l'envers pour le on.
+//***********************************************************************************************************
+void ledConfig(int mode, int on, int off, int nb)
 {
   delaiOn = on;
   delaiOff = off;
   nbCycles = nb;
+  flashType = mode;
   timerOn = millis();
-  analogWrite(LED, 255);
-  etatLed = 1;
   flashMode = 1;
-}
-
-void flash()
-{
-  if(((millis() - timerOn) >= delaiOn) && (etatLed == 1))
+  if(flashType == 1)
   {
-    timerOff = millis();
-    analogWrite(LED, 0);
-    etatLed = 0;
-    nbCycles--;
-    Serial.println("on");
-  }
-  if(((millis() - timerOff) >= delaiOff) && (etatLed == 0))
-  {
-    timerOn = millis();
     analogWrite(LED, 255);
     etatLed = 1;
-    Serial.println("off");
   }
-  if(nbCycles <= 0)flashMode = 0;
+  if((flashType == 2)
+  {
+    delaiOn = (on / 255);
+    pwm = 0;
+  }
+  if((flashType == 3)
+  {
+    delaiOn = (on / 255);
+    pwm = 255;
+  }
+}
+
+void flash()  //*********************************************************************************************
+{
+  if(flashType == 1)
+  {
+    if(((millis() - timerOn) >= delaiOn) && (etatLed == 1))
+    {
+      timerOff = millis();
+      analogWrite(LED, 0);
+      etatLed = 0;
+      nbCycles--;
+      Serial.println("on");
+    }
+    if(((millis() - timerOff) >= delaiOff) && (etatLed == 0))
+    {
+      timerOn = millis();
+      analogWrite(LED, 255);
+      etatLed = 1;
+      Serial.println("off");
+    }
+    if(nbCycles <= 0)flashMode = 0;
+  }
+  if(flashType == 2)
+  {
+    if(((millis() - delaiTimer) >= delaiOn) && (etatLed == 1))
+    {
+      analogWrite(LED, pwm);
+      pwm++;
+    }
+    if((pwm == 255) && (etatLed == 1))
+    {
+      analogWrite(LED, 0);
+      timerOff = millis();
+      pwm = 0;
+      etatLed = 0;
+    }
+    if((etatLed == 0) && ((millis() - timerOff) >= delaiOff)) etatLed = 1;
+  }
+  if(flashType == 3)
+  {
+    if(((millis() - delaiTimer) >= delaiOn) && (etatLed == 1))
+    {
+      analogWrite(LED, pwm);
+      pwm--;
+    }
+    if((pwm == 0) && (etatLed == 1))
+    {
+      analogWrite(LED, 0);
+      timerOff = millis();
+      pwm = 255;
+      etatLed = 0;
+    }
+    if((etatLed == 0) && ((millis() - timerOff) >= delaiOff)) etatLed = 1;
+  }
 }
 
 void calibration()  //*************************************************************************************** 
