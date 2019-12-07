@@ -68,6 +68,7 @@ boolean erreurMode = 0;
 
 void setup() //**********************************************************************************************
 {
+  
   Serial.begin(9600);                       //Utilisé pour debug  
   pinMode(Step, OUTPUT);
   pinMode(Dir, OUTPUT);
@@ -80,18 +81,15 @@ void setup() //*****************************************************************
   EEPROM.get(0, compteurTrajet);
   EEPROM.get(4, seuil);
   EEPROM.get(6, autoCalibration);
+  if((etatFdcBas == LOW) && (etatFdcHaut == LOW)) autoCalibration = 1;
   Serial.print("Trajet: ");
   Serial.println(compteurTrajet);
   Serial.print("Seuil: ");
   Serial.println(seuil);
   Serial.print("autoCalibration: ");
   Serial.println(autoCalibration);
-//  if(autoCalibration == 1) calibration();
+  if(autoCalibration == 1) calibration();
   Serial.println("Setup OK");
-  ledConfig(1, 500, 2500, (delaiFermeture / 3000));
-//  fermeture(); 
-//  delay(5000);
-//  ouverture();
 }
 
 // ledConfig(1, 500, 2500, (delaiFermeture / 3000));
@@ -280,12 +278,14 @@ void calibration()  //**********************************************************
   while(etatFdcHaut == HIGH)                  //Tant que fin de course haut desactivé (place la porte en position de debut de calibration en position ouverte)
   {
     avance1pas();                             //Fait avancer le moteur de 1 pas
+    etatFdcHaut = digitalRead(FdcHaut);     //Lecture etat FDC haut
   }
   delay(1500);
   digitalWrite(Dir, LOW);                     //Moteur dans le sens descendre
   while(etatFdcBas == HIGH)                   //Tant que FDC bas desactivé (debut de calibration)
   {
     avance1pas();                             //Fait avancer le moteur de 1 pas
+    etatFdcBas = digitalRead(FdcBas);         //Lecture etat FDC haut
     compteurTrajetDescendant++;               //Incremente le compteur de trajet descendant
   }
   delay(1500);
@@ -294,6 +294,7 @@ void calibration()  //**********************************************************
   {
     avance1pas();                             //Avance le moteur de 1 pas
     compteurTrajetMontant++;                  //Increment le compteur de trajet montant
+    etatFdcHaut = digitalRead(FdcHaut);       //Lecture etat FDC haut
   }
   for(int i = extra; i > 0; i--)            //Movement supplementaire pour assurer l'activation du fin de course   
   {
