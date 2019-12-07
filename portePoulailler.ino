@@ -1,3 +1,15 @@
+//Voir utilité erreurMode
+
+#include <EEPROM.h>
+
+/********** Adressage EEprom *********************************************************************************  
+
+trajet: 0 à 3.
+seuil: 4 à 5.
+autoCalibration: 6.
+    
+ */
+
 //********** Declaration des constantes **********************************************************************
 const int photoResistance = A0;      //Photo resistance connecté sur Pin A0 de l'arduino
 const int Step = 2;                  //Pin step du A4988 connecté sur Pin 2 de l'arduino
@@ -8,28 +20,35 @@ const int FdcHaut = A1;              //Fin de course haut connecté sur Pin A1 d
 const int FdcBas = A2;               //Fin de course bas connecté sur Pin A2 de l'arduino
 
 //********** Declaration des variables pour l'ouverture/fermeture de la porte ********************************
-boolean etatPorte;                  //0: ouverte; 1: fermee   
-boolean etatFdcHaut;                //memorise etat FDC haut
-boolean etatFdcBas;                 //memorise etat FDC bas
-long compteurTrajetMontant;         //Compteur trajet montant, utilisé pour valider la calibration
-long compteurTrajetDescendant;      //Compteur trajet descendant, utilisé pour valider la calibration
-long compteurTrajet;                //Compteur trajet, utilisé pour detecter un probleme de moteur ou de FDC lor de l'utilisation
-int extra = 200;                 //Nombre de pas a faire en plus apres ouverture/fermeture
+boolean etatPorte = 0;                       //0: ouverte; 1: fermee   
+boolean etatFdcHaut;                         //memorise etat FDC haut
+boolean etatFdcBas;                          //memorise etat FDC bas
+unsigned long compteurTrajetMontant;         //Compteur trajet montant, utilisé pour valider la calibration
+unsigned long compteurTrajetDescendant;      //Compteur trajet descendant, utilisé pour valider la calibration
+unsigned long compteurTrajet;                //Compteur trajet, utilisé pour detecter un probleme de moteur ou de FDC lor de l'utilisation
+int extra = 300;                             //Nombre de pas a faire en plus apres ouverture/fermeture
+unsigned long difference;                    //Difference entre nombre de pas ouverture/fermeture durant la calibration
+unsigned long toleranceCalibration = 1600;   //Erreur tolerée pour valider la calibration 
+unsigned long toleranceErreur;                //Erreur tolerée lors d'une ouverture ou fermeture
+unsigned long timerFermeture; 
+boolean fermetureMode = 0;
+unsigned long delaiFermeture = 1200000;      //20min
+boolean autoCalibration;
 
 //********** Declaration des variable pour la mesure de luminosité et traitement de l'info *******************
-int seuil = 750;              //Seuil de declenchement ouverture/fermeture porte.
-int lumi;               //Variable qui stock la valeur de luminosité ambiante
-long delaiTimer = 0;    //Pour valider que le sueil est bien franchi. evite les ouv/ferm intempestives
-int validation = 15000;     //Indique que l'on est en attende de validation que le seuil franchi
-boolean hyst = 50;      //Hysteresis
-long delai = 2000;      //Delai de validation 
+int seuil;                    //Seuil de declenchement ouverture/fermeture porte.
+int lumi;                     //Variable qui stock la valeur de luminosité ambiante
+unsigned long delaiTimer;     //Pour valider que le sueil est bien franchi. evite les ouv/ferm intempestives
+boolean validation = 0;       //Indique que l'on est en attende de validation que le seuil franchi
+boolean hyst = 15;            //Hysteresis
+long delai = 20000;              //180000Delai de validation 
 
 //********** Declaration des variables pour la gestion de la LED *********************************************
 int delaiOn = 0;         //Duree LED allumee
 int delaiOff = 0;        //Duree LED eteinte
 int nbCycles = 0;        //Nombre de cycles a realiser
-long timerOn;            //Timer LED alluméé
-long timerOff;           //Timer LED eteinte
+unsigned long timerOn;   //Timer LED alluméé
+unsigned long timerOff;  //Timer LED eteinte
 boolean etatLed = 0;     //0 = LED eteinte, 1 = LED allumee
 boolean flashMode = 0;   //Indique que la LED doit clignoter
 int flashType = 1;       //Mode de clignotement
@@ -42,6 +61,11 @@ int code;                //Nombre de flash du code a emettre
 int compteurCode;        //Decompte le nombre de flash emis
 boolean pause = 0;       //Sert à distinguer la pause entre deux emission du code
 
+//********** Declaration des variables pour la gestion des erreurs d'ouverture/fermeture *********************
+unsigned long compteurOuverture;       
+unsigned long compteurFermeture;
+boolean erreurMode = 0;
+
 void setup() //**********************************************************************************************
 {
   Serial.begin(9600);                       //Utilisé pour debug  
@@ -53,18 +77,33 @@ void setup() //*****************************************************************
   etatFdcHaut = digitalRead(FdcHaut);
   etatFdcBas = digitalRead(FdcBas);
   digitalWrite(Enable, HIGH);
-  ledConfig(2, 1800, 1000, 20000);     //debug
+  EEPROM.get(0, compteurTrajet);
+  EEPROM.get(4, seuil);
+  EEPROM.get(6, autoCalibration);
+  Serial.print("Trajet: ");
+  Serial.println(compteurTrajet);
+  Serial.print("Seuil: ");
+  Serial.println(seuil);
+  Serial.print("autoCalibration: ");
+  Serial.println(autoCalibration);
+//  if(autoCalibration == 1) calibration();
+  Serial.println("Setup OK");
+  ledConfig(1, 500, 2500, (delaiFermeture / 3000));
+//  fermeture(); 
+//  delay(5000);
+//  ouverture();
 }
 
-//**********************************************************************************************************
-//*** Utilisation de la fonction ledConfig()                                                             
-//*** Mode: - 1 = LED clignotante, 'a': duree allumee, 'b': duree eteinte, 'c': nombre de clignotements
-//***       - 2 = LED allumage progressif, 'a': duree pour passer de  eteint a allumee, 'b': duree durant
-//***             laquelle le LED est eteinte entre deux cycles, 'c': duree du mode en ms
-//***       - 3 = LED a extinction progressive: idem allumage progressif mais a l'envers pour le 'a'.
-//***       - 4 = Code: 'a': nb. de flash du code, 'b': duree du flash, 'c':duree d'emission du code en ms.
-//***********************************************************************************************************
-void ledConfig(int mode, int a, int b, long c)
+// ledConfig(1, 500, 2500, (delaiFermeture / 3000));
+/***********************************************************************************************************
+*** Utilisation de la fonction ledConfig()                                                            
+*** Mode: - 1 = LED clignotante, 'a': duree allumee, 'b': duree eteinte, 'c': nombre de clignotements
+***       - 2 = LED allumage progressif, 'a': duree pour passer de  eteint a allumee, 'b': duree durant
+***             laquelle le LED est eteinte entre deux cycles, 'c': duree du mode en ms
+***       - 3 = LED a extinction progressive: idem allumage progressif mais a l'envers pour le 'a'.
+***       - 4 = Code: 'a': nb. de flash du code, 'b': duree du flash, 'c':duree d'emission du code en ms.
+//**********************************************************************************************************/
+void ledConfig(int mode, int a, int b, unsigned long c)
 {
   delaiOn = a;                      //Defini delaiOn suivant parametre de la fonction
   delaiOff = b;                     //Defini delaiOff suivant parametre de la fonction
@@ -210,16 +249,23 @@ void flash()  //****************************************************************
   }
 }
 
+void ledOff()
+{
+  analogWrite(LED, 0);
+  etatLed = 0;
+  flashMode = 0;
+}
+
 void calibration()  //*************************************************************************************** 
 {
   etatFdcHaut = digitalRead(FdcHaut);         //Lecture etat FDC Haut
   compteurTrajetMontant = 0;                  //Passe le compteur de pas montant a 0
   compteurTrajetDescendant = 0;               //Passe le compteur de pas descendant a 0
-  digitalWrite(Enable, LOW);                 //Active l'alimentation du moteur
+  digitalWrite(Enable, LOW);                  //Active l'alimentation du moteur
   if(FdcHaut == LOW)                          //Si le FDC haut activé
   {
     digitalWrite(Dir, LOW);                   //Moteur dans le sens descente
-    while(etatFdcHaut == LOW)                  //Tant que le FDC haut est activé
+    while(etatFdcHaut == LOW)                 //Tant que le FDC haut est activé
     {
       avance1pas();                           //Fait avancer le moteur de 1 pas
       etatFdcHaut = digitalRead(FdcHaut);     //Lecture etat FDC haut
@@ -229,25 +275,47 @@ void calibration()  //**********************************************************
       avance1pas();                           //Fait avancer le moteur de 1 pas
     }
   }
+  delay(1500);
   digitalWrite(Dir, HIGH);                    //Moteur dans le sens monter
   while(etatFdcHaut == HIGH)                  //Tant que fin de course haut desactivé (place la porte en position de debut de calibration en position ouverte)
   {
     avance1pas();                             //Fait avancer le moteur de 1 pas
   }
+  delay(1500);
   digitalWrite(Dir, LOW);                     //Moteur dans le sens descendre
   while(etatFdcBas == HIGH)                   //Tant que FDC bas desactivé (debut de calibration)
   {
     avance1pas();                             //Fait avancer le moteur de 1 pas
     compteurTrajetDescendant++;               //Incremente le compteur de trajet descendant
   }
+  delay(1500);
   digitalWrite(Dir, HIGH);                    //Moteur dans le sens monter
   while(etatFdcHaut == HIGH)                  //Tant que le FDC haut est desactivé
   {
     avance1pas();                             //Avance le moteur de 1 pas
     compteurTrajetMontant++;                  //Increment le compteur de trajet montant
   }
-  digitalWrite(Enable, HIGH);                  //Coupe l'alimentation du moteur
-  //detection erreur à coder 
+  for(int i = extra; i > 0; i--)            //Movement supplementaire pour assurer l'activation du fin de course   
+  {
+    avance1pas();                           //avance le moteur de 1 pas
+  }
+  etatPorte = 0;                            //Indique que la porte est ouverte
+  digitalWrite(Enable, HIGH);               //Coupe l'alimentation du moteur
+  
+  //********** Detection erreurs et validadation calibration **********
+  
+  difference = (compteurTrajetMontant - compteurTrajetDescendant);
+  difference = abs(difference);
+  if(difference > toleranceCalibration)        //Ecart trop important, rejet de la calibration
+  {
+    ledConfig(4, 1, 300, 5000);
+  }
+  if(difference < toleranceCalibration)        //Calibration reussie, enregistre le nb de pas d'un trajet
+  {
+    compteurTrajet = (((compteurTrajetMontant + compteurTrajetDescendant) / 2) + extra);
+    EEPROM.put(0, compteurTrajet);             //Memorise nb de pas necessaire pour ouvrir/fermer la porte
+    EEPROM.put(6, 0);                          //Desactive la calibration automatique             
+  }
 }
 
 void avance1pas()  //*****************************************************************************************
@@ -261,21 +329,33 @@ void avance1pas()  //***********************************************************
 void ouverture() //*******************************************************************************************
 {
   etatFdcHaut = digitalRead(FdcHaut);       //lecture etat fin de course haut
-  digitalWrite(Dir, HIGH);                  //moteur sens montee
+  digitalWrite(Dir, HIGH);                  //moteur sens monter
   digitalWrite(Enable, LOW);                //active le moteur
+  compteurOuverture = 0;
   while(etatFdcHaut == HIGH)                //Tant que fin de course haut desactivé
   {
     avance1pas();                           //avance le moteur de 1 pas
-    etatFdcHaut = digitalRead(FdcHaut);     //lecture etat fin de course haut   
+    etatFdcHaut = digitalRead(FdcHaut);     //lecture etat fin de course haut 
+    compteurOuverture++;
+//    if(compteurOuverture > (compteurTrajet + toleranceErreur))   //Si probleme de FDC
+//    {
+//      erreurMode = 1;
+//      ledConfig(4, 1, 300, 86400000);       //Signale l'erreur jusqu'a la fermeture
+//      digitalWrite(Dir, LOW);               //met le moteur en sens descendre
+//      for(int i = (extra + toleranceErreur); i > 0; i--) //Met la porte en bonne position
+//      {
+//        avance1pas();                           //avance le moteur de 1 pas
+//      }
+//      digitalWrite(Dir, HIGH);               //met le moteur en sens monter      
+//    }
   } 
-  for(int i = extra; i > 0; i--)      //Movement supplementaire pour assurer l'activation du fin de course   
+  for(int i = extra; i > 0; i--)            //Movement supplementaire pour assurer l'activation du fin de course   
   {
-    avance1pas();                         //avance le moteur de 1 pas
+    avance1pas();                           //avance le moteur de 1 pas
   }
   etatPorte = 0;
-  digitalWrite(Enable, HIGH);             //desactive le moteur
-  Serial.println("Porte Ouverte");
-  //detection erreur à coder    
+  digitalWrite(Enable, HIGH);               //desactive le moteur
+  Serial.println("Porte Ouverte");          //Debug
 }  
 
 void fermeture() //*******************************************************************************************
@@ -286,7 +366,19 @@ void fermeture() //*************************************************************
   while(etatFdcBas == HIGH)               //tant que fin de course bas deasctivé 
   {
     avance1pas();                         //avance le moteur de 1 pas
-    etatFdcBas = digitalRead(FdcBas);     
+    etatFdcBas = digitalRead(FdcBas);
+    compteurFermeture++;
+//    if(compteurFermeture > (compteurTrajet + toleranceErreur))     //Si probleme de FDC
+//    {
+//      erreurMode = 1;
+//      ledConfig(4, 2, 300, 86400000);       //Signale l'erreur jusqu'a l'ouverture
+//      digitalWrite(Dir, HIGH);               //met le moteur en sens monter
+//      for(int i = (extra + toleranceErreur); i > 0; i--) //Met la porte en bonne position
+//      {
+//        avance1pas();                           //avance le moteur de 1 pas
+//      }
+//      digitalWrite(Dir, LOW);               //met le moteur en sens descendre      
+//    }     
   }   
   for(int i = extra; i>0; i--)        //mouvement supplementaire pour assurer l'activation du fin de course
   {
@@ -295,28 +387,32 @@ void fermeture() //*************************************************************
   etatPorte = 1;
   digitalWrite(Enable, HIGH);             //desactive le moteur
   Serial.println("Porte Fermee");
-  //detection erreur à coder
 }
 
 void luminosite() //******************************************************************************************
 {
   lumi = analogRead(photoResistance);                             //Mesure la luminosité ambiante
-  
-  if(etatPorte == 0)                                              //Si porte ouverte
+  if((etatPorte == 0) && (fermetureMode == 0))                    //Si porte ouverte
   {
     if((lumi <= (seuil - hyst)) && (validation == 0))             //Si la luminosité ambiante passe sous le seuil pour la premiere fois
     {
+      erreurMode = 0;
+      Serial.println("entree valid fermeture");
       delaiTimer = millis();                                      //Demarre le chrono de validation de depassement de seuil
       validation = 1;                                             //Indique que la vailidation de depassement de seuil est active
+      ledConfig(3, 1500, 1000, delai);
     }
     if((lumi >= (seuil - hyst)) && (validation == 1))              //Si la luminosité remonte au dessus du seuil avant la fin de la validation
     {
       validation = 0;                                             //Annule la validation et la fermeture de la porte
+      ledOff();
     }
-    if(((lumi <= (seuil-hyst)) && (validation == 1) && (millis() - delaiTimer) >= delai)) //Si delai de validation ecoulé
-    {
-      fermeture();                                                //Ferme la porte 
-      validation = 0;                                             //Sort du mode validation
+    if(((lumi <= (seuil-hyst)) && (validation == 1) && (millis() - delaiTimer) >= delai) && (fermetureMode == 0)) //Si delai de validation ecoulé
+    { 
+      Serial.println("Timer fermeture");
+      ledConfig(1, 150, 2850, (delaiFermeture / 3000));
+      fermetureMode = 1;                                          //Demarre la temporisatio de fermeture
+      timerFermeture = millis();                                  //Ferme la porte
     }
   }
   
@@ -324,17 +420,23 @@ void luminosite() //************************************************************
   {
     if((lumi >= (seuil + hyst)) && (validation == 0))             //Si la luminosité ambiante passe au dessus le seuil pour la premiere fois
     {
+      erreurMode = 0;
+      Serial.println("entree valid ouverture");
       delaiTimer = millis();                                      //Demarre le chrono de validation de depassement de seuil
       validation = 1;                                             //Indique que la vailidation de depassement de seuil est active
+      ledConfig(2, 1500, 1000, delai);
     }
     if((lumi <= (seuil + hyst)) && (validation == 1))             //Si la luminosité descend sous le seuil avant la fin de la validation
     {
       validation = 0;                                             //Annule la validation et l'ouverture de la porte
+      ledOff();
     }
     if(((lumi >= (seuil + hyst)) && (validation == 1)) && ((millis() - delaiTimer) > delai))  //Si delai validation ecoulé
-    {
-      ouverture();                                                //Ouvre la porte 
+    { 
+      Serial.println("ouverture");
       validation = 0;                                             //Sort du mode validation
+      ledOff();
+      ouverture();
     }
   }
 //  Serial.println(lumi);
@@ -342,6 +444,16 @@ void luminosite() //************************************************************
 
 void loop() //***************************************************************************************************
 {
-//  luminosite();
+  luminosite();
   if(flashMode == 1) flash();
+  if(fermetureMode == 1)
+  {
+    if((millis() - timerFermeture) > delaiFermeture) 
+    {
+      Serial.println("fermeture");
+      fermetureMode = 0;
+      validation = 0;                                             //Sort du mode validation
+      fermeture();
+    }
+  }
 }
