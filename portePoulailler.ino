@@ -6,9 +6,20 @@
 
 trajet: 0 à 3.
 seuil: 4 à 5.
-autoCalibration: 6.
     
  */
+
+//********** Variable à modifier *****************************************************************************
+
+//int extra = 200;                             //Nombre de pas a faire en plus apres ouverture/fermeture
+//unsigned long delaiFermeture = 1200000;      //Delai fermeture apres validation
+//boolean hyst = 15;                           //Hysteresis
+//long delai = 20000;                          //Delai de validation 
+
+int extra = 50;                                //Debug
+unsigned long delaiFermeture = 10000;          //Debug
+boolean hyst = 15;                             //Debug
+long delai = 15000;                            //Debug 
 
 //********** Declaration des constantes **********************************************************************
 const int photoResistance = A0;      //Photo resistance connecté sur Pin A0 de l'arduino
@@ -25,23 +36,18 @@ boolean etatFdcHaut;                         //memorise etat FDC haut
 boolean etatFdcBas;                          //memorise etat FDC bas
 unsigned long compteurTrajetMontant;         //Compteur trajet montant, utilisé pour valider la calibration
 unsigned long compteurTrajetDescendant;      //Compteur trajet descendant, utilisé pour valider la calibration
-unsigned long compteurTrajet;                //Compteur trajet, utilisé pour detecter un probleme de moteur ou de FDC lor de l'utilisation
-int extra = 300;                             //Nombre de pas a faire en plus apres ouverture/fermeture
+unsigned long trajet;                        //Compteur trajet, utilisé pour detecter un probleme de moteur ou de FDC lor de l'utilisation
 unsigned long difference;                    //Difference entre nombre de pas ouverture/fermeture durant la calibration
 unsigned long toleranceCalibration = 1600;   //Erreur tolerée pour valider la calibration 
 unsigned long toleranceErreur;                //Erreur tolerée lors d'une ouverture ou fermeture
 unsigned long timerFermeture; 
 boolean fermetureMode = 0;
-unsigned long delaiFermeture = 1200000;      //20min
-boolean autoCalibration;
 
 //********** Declaration des variable pour la mesure de luminosité et traitement de l'info *******************
 int seuil;                    //Seuil de declenchement ouverture/fermeture porte.
 int lumi;                     //Variable qui stock la valeur de luminosité ambiante
 unsigned long delaiTimer;     //Pour valider que le sueil est bien franchi. evite les ouv/ferm intempestives
 boolean validation = 0;       //Indique que l'on est en attende de validation que le seuil franchi
-boolean hyst = 15;            //Hysteresis
-long delai = 20000;              //180000Delai de validation 
 
 //********** Declaration des variables pour la gestion de la LED *********************************************
 int delaiOn = 0;         //Duree LED allumee
@@ -70,25 +76,32 @@ void setup() //*****************************************************************
 {
   
   Serial.begin(9600);                       //Utilisé pour debug  
+  digitalWrite(Enable, HIGH);               //Desactive le moteur
   pinMode(Step, OUTPUT);
   pinMode(Dir, OUTPUT);
   pinMode(Enable, OUTPUT);
   pinMode(FdcHaut, INPUT);
   pinMode(FdcBas, INPUT);
+  EEPROM.get(0, trajet);
+  EEPROM.get(4, seuil);
+  ouverture();
   etatFdcHaut = digitalRead(FdcHaut);
   etatFdcBas = digitalRead(FdcBas);
-  digitalWrite(Enable, HIGH);
-  EEPROM.get(0, compteurTrajet);
-  EEPROM.get(4, seuil);
-  EEPROM.get(6, autoCalibration);
-  if((etatFdcBas == LOW) && (etatFdcHaut == LOW)) autoCalibration = 1;
+  if((etatFdcBas == LOW) && (etatFdcHaut == LOW)) 
+  {
+    analogWrite(LED, 255);
+    while(etatFdcBas == LOW)
+    {
+      etatFdcBas = digitalRead(FdcBas);
+    }
+    analogWrite(LED, 0);
+    delay(2500);
+    calibration();
+  }
   Serial.print("Trajet: ");
-  Serial.println(compteurTrajet);
+  Serial.println(trajet);
   Serial.print("Seuil: ");
   Serial.println(seuil);
-  Serial.print("autoCalibration: ");
-  Serial.println(autoCalibration);
-  if(autoCalibration == 1) calibration();
   Serial.println("Setup OK");
 }
 
@@ -256,11 +269,11 @@ void ledOff()
 
 void calibration()  //*************************************************************************************** 
 {
-  etatFdcHaut = digitalRead(FdcHaut);         //Lecture etat FDC Haut
   compteurTrajetMontant = 0;                  //Passe le compteur de pas montant a 0
   compteurTrajetDescendant = 0;               //Passe le compteur de pas descendant a 0
   digitalWrite(Enable, LOW);                  //Active l'alimentation du moteur
-  if(FdcHaut == LOW)                          //Si le FDC haut activé
+  etatFdcHaut = digitalRead(FdcHaut);         //Lecture etat FDC Haut
+  if(etatFdcHaut == LOW)                      //Si le FDC haut activé
   {
     digitalWrite(Dir, LOW);                   //Moteur dans le sens descente
     while(etatFdcHaut == LOW)                 //Tant que le FDC haut est activé
@@ -268,40 +281,42 @@ void calibration()  //**********************************************************
       avance1pas();                           //Fait avancer le moteur de 1 pas
       etatFdcHaut = digitalRead(FdcHaut);     //Lecture etat FDC haut
     } 
-    for(int i = 0; i < 1300; i++)             //Fait descendre la porte de 5mm supplementaire
+    for(int i = extra; i > 0; i--)            //Fait descendre la porte de 5mm supplementaire
     {
       avance1pas();                           //Fait avancer le moteur de 1 pas
     }
   }
-  delay(1500);
+  delay(1000);
   digitalWrite(Dir, HIGH);                    //Moteur dans le sens monter
-  while(etatFdcHaut == HIGH)                  //Tant que fin de course haut desactivé (place la porte en position de debut de calibration en position ouverte)
+  while(etatFdcHaut == HIGH)                  //Place la porte en position de debut de calibration en position ouverte)
   {
     avance1pas();                             //Fait avancer le moteur de 1 pas
-    etatFdcHaut = digitalRead(FdcHaut);     //Lecture etat FDC haut
+    etatFdcHaut = digitalRead(FdcHaut);       //Lecture etat FDC haut
   }
-  delay(1500);
+  delay(1000);
   digitalWrite(Dir, LOW);                     //Moteur dans le sens descendre
-  while(etatFdcBas == HIGH)                   //Tant que FDC bas desactivé (debut de calibration)
+  etatFdcBas = digitalRead(FdcBas);           //Lecture etat FDC Bas
+  while(etatFdcBas == HIGH)                   //Debut de calibration
   {
     avance1pas();                             //Fait avancer le moteur de 1 pas
     etatFdcBas = digitalRead(FdcBas);         //Lecture etat FDC haut
     compteurTrajetDescendant++;               //Incremente le compteur de trajet descendant
   }
-  delay(1500);
+  delay(1000);
   digitalWrite(Dir, HIGH);                    //Moteur dans le sens monter
+  etatFdcHaut = digitalRead(FdcHaut);
   while(etatFdcHaut == HIGH)                  //Tant que le FDC haut est desactivé
   {
     avance1pas();                             //Avance le moteur de 1 pas
     compteurTrajetMontant++;                  //Increment le compteur de trajet montant
     etatFdcHaut = digitalRead(FdcHaut);       //Lecture etat FDC haut
   }
-  for(int i = extra; i > 0; i--)            //Movement supplementaire pour assurer l'activation du fin de course   
+  for(int i = extra; i > 0; i--)              //Movement supplementaire pour assurer l'activation du fin de course   
   {
-    avance1pas();                           //avance le moteur de 1 pas
+    avance1pas();                             //avance le moteur de 1 pas
   }
-  etatPorte = 0;                            //Indique que la porte est ouverte
-  digitalWrite(Enable, HIGH);               //Coupe l'alimentation du moteur
+  etatPorte = 0;                              //Indique que la porte est ouverte
+  digitalWrite(Enable, HIGH);                 //Coupe l'alimentation du moteur
   
   //********** Detection erreurs et validadation calibration **********
   
@@ -313,8 +328,8 @@ void calibration()  //**********************************************************
   }
   if(difference < toleranceCalibration)        //Calibration reussie, enregistre le nb de pas d'un trajet
   {
-    compteurTrajet = (((compteurTrajetMontant + compteurTrajetDescendant) / 2) + extra);
-    EEPROM.put(0, compteurTrajet);             //Memorise nb de pas necessaire pour ouvrir/fermer la porte
+    trajet = (((compteurTrajetMontant + compteurTrajetDescendant) / 2) + extra);
+    EEPROM.put(0, trajet);             //Memorise nb de pas necessaire pour ouvrir/fermer la porte
     EEPROM.put(6, 0);                          //Desactive la calibration automatique             
   }
 }
@@ -332,13 +347,13 @@ void ouverture() //*************************************************************
   etatFdcHaut = digitalRead(FdcHaut);       //lecture etat fin de course haut
   digitalWrite(Dir, HIGH);                  //moteur sens monter
   digitalWrite(Enable, LOW);                //active le moteur
-  compteurOuverture = 0;
+  compteurOuverture = 0;                    //Remise a 0 du compteur de pas ouverture (detection d'erreur FDC)
   while(etatFdcHaut == HIGH)                //Tant que fin de course haut desactivé
   {
     avance1pas();                           //avance le moteur de 1 pas
     etatFdcHaut = digitalRead(FdcHaut);     //lecture etat fin de course haut 
     compteurOuverture++;
-//    if(compteurOuverture > (compteurTrajet + toleranceErreur))   //Si probleme de FDC
+//    if(compteurOuverture > (trajet + toleranceErreur))   //Si probleme de FDC
 //    {
 //      erreurMode = 1;
 //      ledConfig(4, 1, 300, 86400000);       //Signale l'erreur jusqu'a la fermeture
@@ -364,29 +379,30 @@ void fermeture() //*************************************************************
   etatFdcBas= digitalRead(FdcBas);        //lecture fin de course bas
   digitalWrite(Dir, LOW);                 //moteur sens descente
   digitalWrite(Enable, LOW);              //active le moteur
+  compteurFermeture = 0;                  //Remise a 0 du compteur de pas fermeture (detection d'erreur FDC)
   while(etatFdcBas == HIGH)               //tant que fin de course bas deasctivé 
   {
     avance1pas();                         //avance le moteur de 1 pas
     etatFdcBas = digitalRead(FdcBas);
     compteurFermeture++;
-//    if(compteurFermeture > (compteurTrajet + toleranceErreur))     //Si probleme de FDC
+//    if(compteurFermeture > (trajet + toleranceErreur))     //Si probleme de FDC
 //    {
 //      erreurMode = 1;
-//      ledConfig(4, 2, 300, 86400000);       //Signale l'erreur jusqu'a l'ouverture
-//      digitalWrite(Dir, HIGH);               //met le moteur en sens monter
+//      ledConfig(4, 2, 300, 86400000);                    //Signale l'erreur jusqu'a l'ouverture
+//      digitalWrite(Dir, HIGH);                           //met le moteur en sens monter
 //      for(int i = (extra + toleranceErreur); i > 0; i--) //Met la porte en bonne position
 //      {
-//        avance1pas();                           //avance le moteur de 1 pas
+//        avance1pas();                                    //avance le moteur de 1 pas
 //      }
-//      digitalWrite(Dir, LOW);               //met le moteur en sens descendre      
+//      digitalWrite(Dir, LOW);                            //met le moteur en sens descendre      
 //    }     
   }   
-  for(int i = extra; i>0; i--)        //mouvement supplementaire pour assurer l'activation du fin de course
+  for(int i = extra; i>0; i--)                             //mouvement supplementaire pour assurer l'activation du fin de course
   {
-    avance1pas();                         //avance de 1 pas
+    avance1pas();                                          //avance de 1 pas
   }
   etatPorte = 1;
-  digitalWrite(Enable, HIGH);             //desactive le moteur
+  digitalWrite(Enable, HIGH);                              //desactive le moteur
   Serial.println("Porte Fermee");
 }
 
@@ -443,8 +459,66 @@ void luminosite() //************************************************************
 //  Serial.println(lumi);
 }
 
+void manuelle()
+{
+  //********** En stand by *****************************************
+  etatFdcBas = digitalRead(FdcBas);
+  if((etatPorte == 0) && (etatFdcBas == LOW))
+  {
+    if(validation == 1)
+    {
+      validation =0;
+      ledOff();
+    }
+ 
+    analogWrite(LED, 255);                      //allume la LED
+    while(etatFdcBas == LOW)
+    {
+      etatFdcBas = digitalRead(FdcBas);
+    }
+    Serial.println("Fermeture manuelle");
+    analogWrite(LED, 0);
+//    fermeture();
+    digitalWrite(Dir, LOW);                          //moteur sens descente
+    digitalWrite(Enable, LOW);                       //active le moteur
+    for(int i = (trajet + extra); i > 0; i--)
+    {
+      avance1pas();
+    }
+    digitalWrite(Enable, HIGH);                     //Desactive le moteur
+    etatPorte = 1;                                  //etat porte fermée 
+  }
+  etatFdcHaut = digitalRead(FdcHaut);
+  if((etatPorte == 1) && (etatFdcHaut == LOW))
+  {
+    if(validation == 1)
+    {
+      validation =0;
+      ledOff();
+    }
+    
+    analogWrite(LED, 255);                      //allume la LED
+    while(etatFdcHaut == LOW)
+    {
+      etatFdcHaut = digitalRead(FdcHaut);
+    }
+    Serial.println("Ouverture manuelle");
+    analogWrite(LED, 0);
+//    ouverture();
+    digitalWrite(Dir, HIGH);                          //moteur sens montee
+    digitalWrite(Enable, LOW);                       //active le moteur
+    for(int i = (trajet + extra); i > 0; i--)
+    {
+      avance1pas();
+    }
+    digitalWrite(Enable, HIGH);                     //Desactive le moteur
+    etatPorte = 0;                                  //etat porte ouverte 
+  }
+}
+
 void loop() //***************************************************************************************************
 {
+  manuelle();
   luminosite();
   if(flashMode == 1) flash();
   if(fermetureMode == 1)
