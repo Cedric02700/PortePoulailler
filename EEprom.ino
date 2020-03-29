@@ -1,43 +1,32 @@
 /********** Adressage EEprom *********************************************************************************  
 
 trajet: 0 à 3.
-seuil: 4 à 5.
-autoCalibration: 6
-
-**************************************************************************************************************/
+seuil: 5 à 6.
+    
+ */
 
  
  #include <EEPROM.h>
 
-//********** Valeur a modifier ******************************************************************************
-//unsigned long trajet = 27115;
-//int seuil = 45;
-unsigned long trajet = 20;     //Debug
-int seuil = 600;                   //Debug
-
+unsigned long trajet = 26652;
 unsigned long valeurTrajet;
+int seuil = 20;
 int valeurSeuil;
-//boolean autoCal = 0;
-//boolean autoCalibration;
 
 void setup() 
 {
   EEPROM.put(0, trajet);
-  EEPROM.put(4, seuil);
-//  EEPROM.put(6, autoCal);
+  EEPROM.put(5, seuil);
   Serial.begin(9600);
 }
 
 void loop() 
 {
   EEPROM.get(0, valeurTrajet);
-  EEPROM.get(4, valeurSeuil);
-//  EEPROM.get(6, autoCalibration);
+  EEPROM.get(5, valeurSeuil);
   Serial.print("Trajet: ");
   Serial.println(valeurTrajet);
   Serial.print("Seuil: ");
   Serial.println(valeurSeuil);
-//  Serial.print("autoCalibration: ");
-//  Serial.println(autoCalibration);
   delay(100000);
 }
