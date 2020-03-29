@@ -471,6 +471,13 @@ void manuelle() //**************************************************************
     {
       avance1pas();
       manuPas++;
+      etatFdcBas = digitalRead(FdcBas);                                   //Verifie FDC bas
+      if(etatFdcBas == LOW)
+      {
+        etatPorte = 1;
+        digitalWrite(Enable, HIGH);                      //Desactive le moteur
+        return;
+      }
       if(manuPas > (trajet * 0.1))
       {
         etatFdcHaut = digitalRead(FdcHaut);
@@ -507,6 +514,13 @@ void manuelle() //**************************************************************
     {
       avance1pas();
       manuPas++;
+      etatFdcHaut = digitalRead(FdcHaut);                                   //Verifie FDC bas
+      if(etatFdcHaut == LOW)
+      {
+        etatPorte = 0;
+        digitalWrite(Enable, HIGH);                      //Desactive le moteur
+        return;
+      }
       if(manuPas > (trajet * 0.1))
       {
         etatFdcBas = digitalRead(FdcBas);
